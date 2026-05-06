@@ -119,7 +119,8 @@ class WorkDriveAPI:
 
             break
 
-        assert resp is not None
+        if resp is None:
+            raise RuntimeError(f"_request: no response after {max_attempts} attempts")
         if resp.ok:
             self._pacer_decrease()
         else:
