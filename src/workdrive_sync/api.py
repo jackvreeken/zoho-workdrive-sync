@@ -52,12 +52,12 @@ class WorkDriveAPI:
     def _pacer_increase(self, reason: str) -> None:
         old = self._current_sleep
         self._current_sleep = min(self._current_sleep * self.DECAY, self.MAX_SLEEP)
-        logger.warning("Pacer backoff (%s): %.3fs -> %.3fs", reason, old, self._current_sleep)
+        logger.debug("Pacer backoff (%s): %.3fs -> %.3fs", reason, old, self._current_sleep)
 
     def _pacer_set_cooloff(self, wait: float, reason: str) -> None:
         old = self._current_sleep
         self._current_sleep = min(max(wait, old), self.MAX_SLEEP)
-        logger.warning("Pacer cool-off (%s): %.3fs -> %.3fs", reason, old, self._current_sleep)
+        logger.debug("Pacer cool-off (%s): %.3fs -> %.3fs", reason, old, self._current_sleep)
 
     def _pacer_decrease(self) -> None:
         if self._current_sleep <= self.MIN_SLEEP:
