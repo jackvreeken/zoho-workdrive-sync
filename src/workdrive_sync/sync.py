@@ -243,6 +243,9 @@ class SyncEngine:
         Each candidate with a known remote_id is verified via a single
         get_file_meta call; mismatched etag or a remote-gone (404) defers
         the item to the next full reconcile rather than risking a clobber.
+        New files (no remote_id) are checked against the parent listing
+        first; a same-named remote sibling defers to the full reconcile,
+        which surfaces it as a BOTH_ADDED conflict.
         """
         errors: List[str] = []
         for item in items:
@@ -255,6 +258,10 @@ class SyncEngine:
                 if current_etag and current_etag != item.remote_etag:
                     logger.info("fast-upload deferred (remote etag changed): %s", item.rel_path)
                     continue
+            else:
+                if self._remote_name_collision(item.rel_path):
+                    logger.info("fast-upload deferred (remote name collision): %s", item.rel_path)
+                    continue
             try:
                 self._execute_one(item)
             except Exception as e:
@@ -262,6 +269,21 @@ class SyncEngine:
                 logger.error("Fast-upload failed for %s", msg)
                 errors.append(msg)
         return errors
+
+    def _remote_name_collision(self, rel_path: str) -> bool:
+        """True if the remote already has a non-folder child with this name.
+
+        Used by the fast-upload path to avoid creating a duplicate when a
+        same-named file appeared remotely between the last sync and this
+        save.  The full reconcile then surfaces it as BOTH_ADDED.
+        """
+        parent_id = self.api.ensure_remote_dirs(self.remote_folder_id, rel_path, db=self.db)
+        leaf = Path(rel_path).name
+        for child in self.api.list_folder(parent_id):
+            attrs = child.get("attributes", {})
+            if attrs.get("name") == leaf and not attrs.get("is_folder"):
+                return True
+        return False
 
     def _execute_one(self, item: SyncItem) -> None:
         rel = item.rel_path
