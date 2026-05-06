@@ -54,6 +54,9 @@ class SyncItem:
     remote_id: str = ""
     remote_etag: str = ""
     remote_modified: str = ""
+    # Carried from the change-detection scan to avoid re-hashing the
+    # local file when _execute_one writes the upload's DB record.
+    local_hash: str = ""
 
 
 class SyncEngine:
@@ -220,7 +223,8 @@ class SyncEngine:
                     continue
                 if mtime == rec.local_mtime:
                     continue
-                if file_hash(full) == rec.local_hash:
+                h = file_hash(full)
+                if h == rec.local_hash:
                     continue
                 items.append(SyncItem(
                     rel_path=rel,
@@ -229,6 +233,7 @@ class SyncEngine:
                     remote_id=rec.remote_id,
                     remote_etag=rec.remote_etag,
                     remote_modified=rec.remote_modified,
+                    local_hash=h,
                 ))
         return items
 
@@ -275,7 +280,7 @@ class SyncEngine:
             self.db.upsert(FileRecord(
                 rel_path=rel,
                 local_mtime=local.stat().st_mtime,
-                local_hash=file_hash(local),
+                local_hash=item.local_hash or file_hash(local),
                 remote_etag=attrs.get("resource_etag", ""),
                 remote_modified=attrs.get("modified_time", ""),
                 remote_id=meta.get("id", file_id),
