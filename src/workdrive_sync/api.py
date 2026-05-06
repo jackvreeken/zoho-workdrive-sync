@@ -235,10 +235,6 @@ class WorkDriveAPI:
             return self._stream_upload(parent_id, local_path, name, override, size)
         return self._multipart_upload(parent_id, local_path, name, override)
 
-    def update_file(self, parent_id: str, local_path: Path) -> Dict[str, Any]:
-        """Upload a new version of an existing file. Back-compat shim."""
-        return self.upload_file(parent_id, local_path, override=True)
-
     def _multipart_upload(self, parent_id: str, local_path: Path, name: str, override: bool) -> Dict[str, Any]:
         with open(local_path, "rb") as f:
             data = self._json("POST", f"{API_BASE}/upload", params={
