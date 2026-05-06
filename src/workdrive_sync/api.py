@@ -71,7 +71,7 @@ class WorkDriveAPI:
         headers = kwargs.pop("headers", {})
         headers.update(self._headers())
 
-        max_attempts = 5
+        max_attempts = 10
         resp: Optional[requests.Response] = None
         for attempt in range(max_attempts):
             elapsed = time.time() - self._last_request_time
