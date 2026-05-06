@@ -17,7 +17,7 @@ from .config import Config, load_config, save_config
 from .conflicts import resolve_conflicts
 from .errors import show_errors
 from .state import StateDB
-from .sync import SyncEngine
+from .sync import Action, SyncEngine
 from .tray import SyncTray, TrayState
 
 logger = logging.getLogger(__name__)
@@ -155,8 +155,11 @@ class App:
         # Set while a full sync is in flight so a saved file isn't dropped;
         # the full sync drains this with one fast-upload pass before exiting.
         self._pending_fast_upload = False
-        # Watchdog ignores events until this wall-clock time. Bumped after
-        # syncs so downloads don't trigger an immediate fast-upload pass.
+        # Watchdog ignores events until this wall-clock time. Bumped only
+        # after syncs that wrote local files (downloads or local deletes),
+        # so we don't bounce on our own writes. Upload-only / no-op syncs
+        # leave the watcher fully active so a save right after sync still
+        # reaches the fast-upload path.
         self._suppress_watcher_until = 0.0
 
         self.tray = SyncTray(
@@ -254,9 +257,6 @@ class App:
             elif not self._errors:
                 self.tray.set_state(TrayState.IDLE, "Synced")
         finally:
-            # Give downloads/writes from this pass a window to settle so
-            # the watcher doesn't immediately re-fire on our own changes.
-            self._suppress_watcher_until = time.time() + 10
             self._sync_lock.release()
 
     def _do_sync(self) -> None:
@@ -268,8 +268,16 @@ class App:
             return
         try:
             self.tray.set_state(TrayState.SYNCING, "Syncing...")
+            wrote_local = False
             try:
                 actions, conflicts = self.engine.scan()
+
+                # Suppress the watcher only when this sync is about to
+                # touch the local filesystem -- otherwise a save right
+                # after an upload-only sync would be silently dropped.
+                wrote_local = any(
+                    a.action in (Action.DOWNLOAD, Action.LOCAL_DELETE) for a in actions
+                )
 
                 # Execute non-conflicting actions
                 errors = self.engine.execute(actions)
@@ -303,7 +311,8 @@ class App:
                 except Exception:
                     logger.exception("Pending fast-upload drain failed")
         finally:
-            self._suppress_watcher_until = time.time() + 10
+            if wrote_local:
+                self._suppress_watcher_until = time.time() + 3
             self._sync_lock.release()
 
     def _show_conflicts(self) -> None:
