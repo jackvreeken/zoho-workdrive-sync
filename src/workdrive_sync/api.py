@@ -286,8 +286,22 @@ class WorkDriveAPI:
 
         Returns a flat list with an extra 'rel_path' key on each item.
         If ``db`` is provided, folder paths are upserted into its folders
-        table so later uploads can resolve parent ids without relisting.
+        table so later uploads can resolve parent ids without relisting,
+        and folder rows whose paths are no longer present after the root
+        walk are pruned.
         """
+        is_root = prefix == "" and parent_id == ""
+        seen_folders: Optional[set] = set() if (is_root and db is not None) else None
+        result = self._walk_remote_impl(folder_id, prefix, db, parent_id, seen_folders)
+        if is_root and db is not None and seen_folders is not None:
+            cached = set(db.all_folders().keys())
+            for stale in cached - seen_folders:
+                logger.debug("folder cache: pruned stale %s", stale)
+                db.remove_folder(stale)
+        return result
+
+    def _walk_remote_impl(self, folder_id: str, prefix: str, db, parent_id: str,
+                          seen_folders: Optional[set]) -> List[Dict[str, Any]]:
         logger.debug("walk_remote: entering %s (id=%s)", prefix or "<root>", folder_id)
         result = []
         items = self.list_folder(folder_id)
@@ -305,7 +319,9 @@ class WorkDriveAPI:
                 logger.debug("walk_remote: descend -> %s", rel)
                 if db is not None:
                     db.upsert_folder(rel, item["id"], folder_id)
-                result.extend(self.walk_remote(item["id"], rel, db=db, parent_id=folder_id))
+                if seen_folders is not None:
+                    seen_folders.add(rel)
+                result.extend(self._walk_remote_impl(item["id"], rel, db, folder_id, seen_folders))
             else:
                 logger.debug("walk_remote: file -> %s", rel)
                 result.append(item)
