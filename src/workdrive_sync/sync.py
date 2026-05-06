@@ -178,9 +178,9 @@ class SyncEngine:
 
         logger.info("scan: done -- %d actions, %d conflicts", len(actions), len(conflicts))
         for a in actions:
-            logger.info("  action: %s %s", a.action.name, a.rel_path)
+            logger.debug("  action: %s %s", a.action.name, a.rel_path)
         for c in conflicts:
-            logger.info("  conflict: %s %s", c.conflict_type.value if c.conflict_type else "?", c.rel_path)
+            logger.debug("  conflict: %s %s", c.conflict_type.value if c.conflict_type else "?", c.rel_path)
         return actions, conflicts
 
     def execute(self, items: List[SyncItem]) -> List[str]:

@@ -288,10 +288,10 @@ class WorkDriveAPI:
         If ``db`` is provided, folder paths are upserted into its folders
         table so later uploads can resolve parent ids without relisting.
         """
-        logger.info("walk_remote: entering %s (id=%s)", prefix or "<root>", folder_id)
+        logger.debug("walk_remote: entering %s (id=%s)", prefix or "<root>", folder_id)
         result = []
         items = self.list_folder(folder_id)
-        logger.info("walk_remote: %s has %d entries", prefix or "<root>", len(items))
+        logger.debug("walk_remote: %s has %d entries", prefix or "<root>", len(items))
         for item in items:
             attrs = item.get("attributes", {})
             name = attrs.get("name", "")
@@ -302,7 +302,7 @@ class WorkDriveAPI:
 
             item["rel_path"] = rel
             if is_folder:
-                logger.info("walk_remote: descend -> %s", rel)
+                logger.debug("walk_remote: descend -> %s", rel)
                 if db is not None:
                     db.upsert_folder(rel, item["id"], folder_id)
                 result.extend(self.walk_remote(item["id"], rel, db=db, parent_id=folder_id))
