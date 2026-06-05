@@ -283,18 +283,61 @@ class WorkDriveAPI:
         Returns a flat list with an extra 'rel_path' key on each item.
         If ``db`` is provided, folder paths are upserted into its folders
         table so later uploads can resolve parent ids without relisting,
-        and folder rows whose paths are no longer present after the root
-        walk are pruned.
+        and rows for folders confirmed deleted are pruned after the root
+        walk (see _prune_vanished_folders).
         """
         is_root = prefix == "" and parent_id == ""
         seen_folders: Optional[set] = set() if (is_root and db is not None) else None
         result = self._walk_remote_impl(folder_id, prefix, db, parent_id, seen_folders)
         if is_root and db is not None and seen_folders is not None:
-            cached = set(db.all_folders().keys())
-            for stale in cached - seen_folders:
-                logger.debug("folder cache: pruned stale %s", stale)
-                db.remove_folder(stale)
+            self._prune_vanished_folders(db, seen_folders)
         return result
+
+    def _prune_vanished_folders(self, db, seen_folders: set) -> None:
+        """Drop folder-cache rows only for folders confirmed gone by id.
+
+        A folder missing from the latest walk is NOT assumed deleted.
+        WorkDrive's folder listings are eventually consistent: a folder
+        created moments ago may be absent from its parent's listing for a
+        while even though it already exists (a get-by-id still returns it).
+        Evicting such a row and then re-resolving the path during that
+        window makes ensure_remote_dirs create a *second* folder of the
+        same name -- WorkDrive permits duplicate names -- and every file
+        under it then appears duplicated too.
+
+        So confirm deletion directly rather than inferring it from absence:
+        prune a row only when get_file_meta reports its id gone (404). If
+        the folder still exists, or the check itself errors, keep the row.
+        "When unsure, never evict" is what prevents the duplicate.
+
+        When a folder is confirmed gone, its cached descendants are
+        addressable only through it, so their paths are gone too: drop the
+        whole subtree in one go. That keeps the cache self-consistent -- a
+        row must never reference a vanished ancestor, which would otherwise
+        make ensure_remote_dirs rebuild the parent and create a duplicate
+        of the child. Iterating shallowest-path-first means a descendant is
+        never id-checked once its ancestor is already known gone.
+        """
+        folders = dict(db.all_folders())
+        to_remove: set = set()
+        for rel_path, (remote_id, _parent_id) in sorted(folders.items()):
+            if rel_path in seen_folders or rel_path in to_remove or not remote_id:
+                continue
+            try:
+                vanished = self.get_file_meta_or_none(remote_id) is None
+            except Exception:
+                logger.debug("folder cache: existence check failed for %s; keeping", rel_path)
+                continue
+            if not vanished:
+                continue
+            to_remove.add(rel_path)
+            subtree_prefix = rel_path + "/"
+            for other in folders:
+                if other.startswith(subtree_prefix):
+                    to_remove.add(other)
+        for rel_path in to_remove:
+            logger.debug("folder cache: pruned vanished %s", rel_path)
+            db.remove_folder(rel_path)
 
     def _walk_remote_impl(self, folder_id: str, prefix: str, db, parent_id: str,
                           seen_folders: Optional[set]) -> List[Dict[str, Any]]:

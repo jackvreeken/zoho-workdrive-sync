@@ -191,6 +191,17 @@ class SyncEngine:
         errors: List[str] = []
         for item in items:
             try:
+                if (item.action == Action.UPLOAD and not item.remote_id
+                        and self._remote_name_collision(item.rel_path)):
+                    # A same-named remote file appeared since the scan (or was
+                    # created directly in WorkDrive) and was missed because
+                    # the listing lagged. Uploading now -- override-name-exist
+                    # is false without a remote_id -- would fork a duplicate.
+                    # Defer so the next reconcile, once the sibling is visible,
+                    # classifies it as BOTH_ADDED for the conflict dialog. This
+                    # mirrors the guard quick_upload already applies.
+                    logger.info("upload deferred (remote name collision): %s", item.rel_path)
+                    continue
                 self._execute_one(item)
             except Exception as e:
                 msg = f"{item.rel_path}: {e}"
