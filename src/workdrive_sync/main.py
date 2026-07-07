@@ -358,9 +358,36 @@ class App:
         Gtk.main()
 
 
+def reauthorize() -> None:
+    """Re-run the grant-code exchange, reusing the saved client credentials.
+
+    Needed when the required scope set changes: the refresh token carries the
+    scopes it was minted with, so an expanded SCOPES only takes effect after a
+    fresh grant. Overwrites the stored refresh token; leaves the rest of the
+    config (team, workspace, folder) untouched.
+    """
+    cfg = load_config()
+    if not cfg.client_id or not cfg.client_secret:
+        print("No saved credentials to re-authorize. Run setup first.")
+        sys.exit(1)
+
+    print("\n=== WorkDrive Sync - Re-authorize ===\n")
+    print(f"Generate a grant code at https://api-console.zoho.eu/")
+    print(f"  Self Client -> Generate Code")
+    print(f"  Scope: {SCOPES}\n")
+    grant_code = input("Grant code: ").strip()
+
+    ZohoAuth(cfg.client_id, cfg.client_secret).authorize(grant_code)
+    print("Re-authorized. Restart the sync client to pick up the new token.")
+
+
 def main() -> None:
     setup_logging()
     signal.signal(signal.SIGINT, signal.SIG_DFL)  # Allow Ctrl+C
+
+    if "--reauthorize" in sys.argv[1:]:
+        reauthorize()
+        return
 
     cfg = load_config()
     if not cfg.client_id:

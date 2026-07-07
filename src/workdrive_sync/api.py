@@ -95,7 +95,18 @@ class WorkDriveAPI:
                     continue
                 raise
 
-            # Retry once on 401 (token expired mid-request); doesn't affect pacer.
+            # A 401 mid-request normally means the access token expired:
+            # drop it and retry once (doesn't affect the pacer). But
+            # INVALID_OAUTHSCOPE is permanent -- the grant lacks a scope the
+            # endpoint requires, which refreshing cannot add -- so fail fast
+            # with an actionable message instead of hammering the token
+            # endpoint (rapid refreshes there start returning 400).
+            if resp.status_code == 401 and self._is_scope_error(resp):
+                raise PermissionError(
+                    f"{method} {url} -> 401 INVALID_OAUTHSCOPE: the Zoho "
+                    "authorization is missing a required scope. Re-authorize "
+                    "with the current scope set (run with --reauthorize)."
+                )
             if resp.status_code == 401 and attempt == 0:
                 self.auth._access_token = None
                 headers.update(self._headers())
@@ -153,6 +164,18 @@ class WorkDriveAPI:
             return False
         errors = body.get("errors") if isinstance(body, dict) else None
         return bool(errors)
+
+    @staticmethod
+    def _is_scope_error(resp: requests.Response) -> bool:
+        """Return True if a 401 was caused by a missing OAuth scope.
+
+        Zoho signals this with INVALID_OAUTHSCOPE in the reason phrase or the
+        response body. It is permanent for the current grant: only
+        re-authorizing with the required scope can fix it.
+        """
+        if "INVALID_OAUTHSCOPE" in (resp.reason or ""):
+            return True
+        return "INVALID_OAUTHSCOPE" in resp.text
 
     # ------------------------------------------------------------------
     # Workspace / team discovery
