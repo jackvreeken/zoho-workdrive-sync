@@ -15,6 +15,14 @@ logger = logging.getLogger(__name__)
 
 API_BASE = "https://workdrive.zoho.eu/api/v1"
 
+# The streaming upload endpoint lives on a dedicated upload host, not the
+# main API host. Posting /stream/upload to API_BASE instead returns
+# 400 F6016 "URL Rule is not configured" for modest files and a proxy-level
+# 413 for large ones. rclone's zoho backend uses this same split: the
+# multipart /upload endpoint on the API host, /stream/upload on the upload
+# host.
+UPLOAD_BASE = "https://upload.zoho.eu/workdrive-api/v1"
+
 # Cursor-paginated max page size for /files/{id}/files. rclone uses 1000
 # in production; higher values haven't been validated.
 PAGE_LIMIT = 1000
@@ -258,7 +266,7 @@ class WorkDriveAPI:
                 "Content-Type": "application/octet-stream",
                 "Content-Length": str(size),
             }
-            data = self._json("POST", f"{API_BASE}/stream/upload", data=f, headers=headers)
+            data = self._json("POST", f"{UPLOAD_BASE}/stream/upload", data=f, headers=headers)
         return data.get("data", [{}])[0] if data.get("data") else data
 
     def create_folder(self, parent_id: str, name: str) -> Dict[str, Any]:
