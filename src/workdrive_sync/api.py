@@ -31,6 +31,9 @@ PAGE_LIMIT = 1000
 # /upload endpoint — rclone's threshold.
 LARGE_FILE_CUTOFF = 10 * 1024 * 1024  # 10 MiB
 
+# Zoho's application error id for an expired or rejected access token.
+INVALID_TOKEN_ERROR_ID = "F7003"
+
 
 class WorkDriveAPI:
     """Thin wrapper around the Zoho WorkDrive v1 API.
@@ -112,6 +115,15 @@ class WorkDriveAPI:
                 headers.update(self._headers())
                 continue
 
+            # Some endpoints report an expired token as 500 F7003 rather than
+            # 401. Refreshing fixes it just the same, and the cached token can
+            # still look unexpired against the local clock, so drop it
+            # explicitly rather than waiting for expiry.
+            if self._is_invalid_token_error(resp) and attempt == 0:
+                self.auth._access_token = None
+                headers.update(self._headers())
+                continue
+
             if resp.status_code == 429 and attempt < max_attempts - 1:
                 retry_after = resp.headers.get("Retry-After")
                 wait = self.RATE_LIMIT_COOLOFF
@@ -123,9 +135,9 @@ class WorkDriveAPI:
                 self._pacer_set_cooloff(wait, "429")
                 continue
 
-            # Retry on 5xx except for structured application errors
-            # (e.g. F000 LESS_THAN_MIN_OCCURANCE) which are permanent
-            # validation failures, not transient hiccups.
+            # Retry on 5xx except for structured validation errors
+            # (e.g. F000 LESS_THAN_MIN_OCCURANCE), which no amount of
+            # retrying will fix.
             if 500 <= resp.status_code < 600 and attempt < max_attempts - 1:
                 if self._is_permanent_api_error(resp):
                     logger.error(
@@ -151,19 +163,35 @@ class WorkDriveAPI:
         return self._request(method, url, **kwargs).json()
 
     @staticmethod
-    def _is_permanent_api_error(resp: requests.Response) -> bool:
-        """Return True if the response carries a Zoho application error.
+    def _error_ids(resp: requests.Response) -> List[str]:
+        """Return the Zoho application error ids carried by a response.
 
-        Zoho returns 5xx with a JSON body like
-        {"errors":[{"id":"F000","title":"..."}]} for permanent validation
-        failures. These are not worth retrying.
+        Zoho signals application-level failures with a JSON body like
+        {"errors":[{"id":"F000","title":"..."}]}, even under a 5xx status.
         """
         try:
             body = resp.json()
         except ValueError:
-            return False
+            return []
         errors = body.get("errors") if isinstance(body, dict) else None
-        return bool(errors)
+        if not isinstance(errors, list):
+            return []
+        return [e.get("id", "") for e in errors if isinstance(e, dict)]
+
+    @staticmethod
+    def _is_permanent_api_error(resp: requests.Response) -> bool:
+        """Return True if the response carries a permanent Zoho error.
+
+        Validation failures are not worth retrying. An expired token also
+        arrives as a structured error but is recoverable, so it is excluded.
+        """
+        ids = WorkDriveAPI._error_ids(resp)
+        return bool(ids) and INVALID_TOKEN_ERROR_ID not in ids
+
+    @staticmethod
+    def _is_invalid_token_error(resp: requests.Response) -> bool:
+        """Return True if the response signals an expired access token."""
+        return INVALID_TOKEN_ERROR_ID in WorkDriveAPI._error_ids(resp)
 
     @staticmethod
     def _is_scope_error(resp: requests.Response) -> bool:
