@@ -190,6 +190,8 @@ class SyncEngine:
         """Execute a list of sync actions. Returns list of error messages."""
         errors: List[str] = []
         for item in items:
+            if self._upload_source_vanished(item):
+                continue
             try:
                 if (item.action == Action.UPLOAD and not item.remote_id
                         and self._remote_name_collision(item.rel_path)):
@@ -260,6 +262,8 @@ class SyncEngine:
         """
         errors: List[str] = []
         for item in items:
+            if self._upload_source_vanished(item):
+                continue
             if item.remote_id:
                 meta = self.api.get_file_meta_or_none(item.remote_id)
                 if meta is None:
@@ -280,6 +284,17 @@ class SyncEngine:
                 logger.error("Fast-upload failed for %s", msg)
                 errors.append(msg)
         return errors
+
+    def _upload_source_vanished(self, item: SyncItem) -> bool:
+        """True if an upload's local file was moved or deleted after queueing.
+
+        Checked before any API call, because resolving the remote parent
+        creates missing folders. The next full reconcile handles the removal.
+        """
+        if item.action != Action.UPLOAD or (self.local_root / item.rel_path).exists():
+            return False
+        logger.info("upload skipped (local file gone): %s", item.rel_path)
+        return True
 
     def _remote_name_collision(self, rel_path: str) -> bool:
         """True if the remote already has a non-folder child with this name.
